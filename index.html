@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Kismetix</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+
+<style>
+body {
+  margin: 0;
+  font-family: Inter, sans-serif;
+  background: #05070D;
+  color: #F1F5F9;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  text-align: center;
+}
+
+.container { max-width: 560px; }
+
+h1 { font-size: 42px; }
+
+.sub { color: #8A94A6; margin-bottom: 30px; }
+
+input {
+  padding: 14px;
+  width: 260px;
+  border-radius: 10px;
+  border: 1px solid #1E293B;
+  background: #0B0F1A;
+  color: white;
+}
+
+button {
+  padding: 12px 14px;
+  margin: 5px;
+  border-radius: 10px;
+  border: none;
+  background: #8B5CF6;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover { opacity: 0.9; }
+
+.progress {
+  margin-top: 20px;
+  height: 8px;
+  background: #1E293B;
+  border-radius: 10px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #3B82F6;
+  border-radius: 10px;
+}
+
+.leaderboard {
+  margin-top: 20px;
+  font-size: 14px;
+  color: #94A3B8;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>Kismetix</h1>
+<div class="sub">Find what’s meant for you</div>
+
+<form id="form">
+  <input id="email" type="email" placeholder="Enter email" required />
+  <button>Join waitlist</button>
+</form>
+
+<div id="result"></div>
+
+<div class="progress">
+  <div class="progress-bar" id="progress"></div>
+</div>
+
+<div class="leaderboard" id="leaderboard"></div>
+
+</div>
+
+<script>
+/* =========================
+   SUPABASE SETUP (FIXED)
+========================= */
+const SUPABASE_URL = "https://tcmbojsqcglbbzooyvdm.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_qtx6qs64jqKfNkBp6I63zQ_MDoEcpjf";
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
+
+/* =========================
+   VIRAL HELPERS
+========================= */
+function generateCode() {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+function getRef() {
+  return new URLSearchParams(window.location.search).get("ref");
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+  alert("Copied invite link 📋");
+}
+
+function shareToTwitter(link) {
+  const text = encodeURIComponent("Join me on Kismetix — early access is opening soon.");
+  window.open(`https://twitter.com/intent/tweet?text=${text}&url=${link}`);
+}
+
+function shareToSMS(link) {
+  const text = encodeURIComponent(`Join me on Kismetix: ${link}`);
+  window.open(`sms:&body=${text}`);
+}
+
+/* =========================
+   TIER SYSTEM
+========================= */
+function getTier(n) {
+  if (n >= 25) return "Founding Access";
+  if (n >= 10) return "Skip the Line";
+  if (n >= 6) return "Priority";
+  if (n >= 3) return "Insider";
+  if (n >= 1) return "Explorer";
+  return "Standard";
+}
+
+/* =========================
+   FORM SUBMIT
+========================= */
+document.getElementById("form").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+
+  const email = document.getElementById("email").value;
+  const referral_code = generateCode();
+  const referred_by = getRef();
+
+  const { error } = await supabase
+    .from("waitlist")
+    .insert([{ email, referral_code, referred_by }]);
+
+  if(error){
+    document.getElementById("result").innerText = "Already joined or error.";
+    return;
+  }
+
+  if(referred_by){
+    await supabase.rpc("increment_referral", {
+      ref_code: referred_by
+    });
+  }
+
+  const link = `${window.location.origin}?ref=${referral_code}`;
+
+  const { data } = await supabase
+    .from("waitlist")
+    .select("*");
+
+  const sorted = data.sort((a,b)=>{
+    if (b.referral_count === a.referral_count) {
+      return new Date(a.created_at) - new Date(b.created_at);
+    }
+    return b.referral_count - a.referral_count;
+  });
+
+  const user = sorted.find(u => u.email === email);
+  const rank = sorted.findIndex(u => u.email === email) + 1;
+  const tier = getTier(user.referral_count);
+
+  document.getElementById("progress").style.width =
+    Math.min(user.referral_count / 10 * 100, 100) + "%";
+
+  document.getElementById("result").innerHTML = `
+    <br/>
+    <strong>You're in 🚀</strong><br/>
+    Rank: #${rank}<br/>
+    Tier: ${tier}<br/><br/>
+
+    <strong>Your invite link:</strong><br/>
+    <div style="word-break:break-all; margin:10px 0;">
+      ${link}
+    </div>
+
+    <div>
+      <button onclick="copyToClipboard('${link}')">📋 Copy</button>
+      <button onclick="shareToTwitter('${link}')">🐦 Twitter</button>
+      <button onclick="shareToSMS('${link}')">💬 iMessage</button>
+    </div>
+
+    <br/>
+    ${user.referral_count} invites → next tier unlock<br/>
+  `;
+
+  renderLeaderboard(sorted);
+});
+
+/* =========================
+   LEADERBOARD
+========================= */
+function renderLeaderboard(data){
+  const top = data.slice(0,5);
+
+  let html = "<br/><strong>Leaderboard</strong><br/>";
+
+  top.forEach((u,i)=>{
+    html += `#${i+1} — ${u.referral_count} invites (${getTier(u.referral_count)})<br/>`;
+  });
+
+  document.getElementById("leaderboard").innerHTML = html;
+}
+</script>
+
+</body>
+</html>
